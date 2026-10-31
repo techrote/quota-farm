@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "name": "artwork-review",
+  "mode": "evaluate",
+  "dataset": "inputs.jsonl",
+  "output_dir": "runs",
+  "concurrency": 3,
+  "max_records": 100,
+  "models": {
+    "visual": {
+      "model": "gpt-6.1-sol",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "billing": "free_expected",
+      "pool": "premium",
+      "reserve_input_tokens": 7000,
+      "max_output_tokens": 1100,
+      "image_token_reserve": 5000,
+      "max_images": 6
+    },
+    "gameplay": {
+      "model": "gpt-5.6-terra",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "billing": "free_expected",
+      "pool": "secondary",
+      "reserve_input_tokens": 7000,
+      "max_output_tokens": 1000
+    }
+  },
+  "reviewers": [
+    {
+      "id": "visual",
+      "model": "visual",
+      "prompt": "visual-review.md",
+      "min_score": 0.8,
+      "include_images": true
+    },
+    {
+      "id": "playability",
+      "model": "gameplay",
+      "prompt": "playability-review.md",
+      "min_score": 0.8,
+      "include_images": false
+    }
+  ],
+  "budgets": {
+    "daily_premium_tokens": 250000,
+    "daily_secondary_tokens": 2500000,
+    "monthly_paid_usd": 88,
+    "run_paid_usd": 8,
+    "cycle_start_day": 1
+  }
+}

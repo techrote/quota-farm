@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e .
+      - name: Offline unit tests (never contact model providers)
+        run: python -m unittest discover -s tests -v
+      - name: Validate sample manifests (offline)
+        run: |
+          python -m quota_farm plan examples/sprocket/job.json
+          python -m quota_farm plan examples/artwork/job.json
+          python -m quota_farm plan examples/npc/job.json
