@@ -7,6 +7,8 @@ These are local limits, not authoritative OpenAI billing measurements.
 from __future__ import annotations
 
 import calendar
+from contextlib import contextmanager
+from typing import Iterator
 import math
 import sqlite3
 import uuid
@@ -56,12 +58,24 @@ class Ledger:
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS requests_bucket ON requests(bucket, period)")
             db.execute("CREATE INDEX IF NOT EXISTS requests_run ON requests(run_id)")
+            db.execute("""CREATE TABLE IF NOT EXISTS limits (
+                bucket TEXT NOT NULL, period TEXT NOT NULL, ceiling INTEGER NOT NULL,
+                PRIMARY KEY(bucket, period)
+            )""")
+            db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 
-    def _db(self) -> sqlite3.Connection:
+    @contextmanager
+    def _db(self) -> Iterator[sqlite3.Connection]:
+        # The sqlite3.Connection context manager does NOT close the handle.
+        # Explicit closing is mandatory on Windows before a temporary state directory
+        # can be removed, and prevents long-lived file locks on every platform.
         db = sqlite3.connect(self.path, timeout=15, isolation_level=None)
-        db.execute("PRAGMA busy_timeout=15000")
-        db.execute("PRAGMA journal_mode=WAL")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout=15000")
+            db.execute("PRAGMA journal_mode=WAL")
+            yield db
+        finally:
+            db.close()
 
     def reserve(
         self, run_id: str, profile: Profile, budget: Budget, *, image_count: int = 0
@@ -81,6 +95,29 @@ class Ledger:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                # A single state directory must not silently mix different monthly
+                # grant renewal days; distinct projects may use distinct state dirs.
+                if bucket == "paid":
+                    previous_cycle = db.execute(
+                        "SELECT value FROM metadata WHERE key='cycle_start_day'"
+                    ).fetchone()
+                    if previous_cycle and previous_cycle[0] != str(budget.cycle_start_day):
+                        raise ValueError("inconsistent cycle_start_day for shared ledger")
+                    db.execute(
+                        "INSERT OR IGNORE INTO metadata VALUES('cycle_start_day', ?)",
+                        (str(budget.cycle_start_day),)
+                    )
+                # Never let another job with a larger config raise the day's cap.
+                prior = db.execute(
+                    "SELECT ceiling FROM limits WHERE bucket=? AND period=?",
+                    (bucket, period)
+                ).fetchone()
+                limit = min(limit, prior[0]) if prior else limit
+                db.execute(
+                    "INSERT INTO limits(bucket, period, ceiling) VALUES(?,?,?) "
+                    "ON CONFLICT(bucket,period) DO UPDATE SET ceiling=excluded.ceiling",
+                    (bucket, period, limit)
+                )
                 current = db.execute(
                     "SELECT COALESCE(SUM(COALESCE(spent, amount)), 0) "
                     "FROM requests WHERE bucket=? AND period=?",

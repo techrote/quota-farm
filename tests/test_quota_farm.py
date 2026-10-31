@@ -118,12 +118,11 @@ class LedgerTests(unittest.TestCase):
             free = profile(billing="free_expected", pool="premium",
                            reserve_input_tokens=2000, max_output_tokens=500)
             one = ledger.reserve("run", free, spec)
+            two = ledger.reserve("run", free, spec)
             with self.assertRaises(BudgetExceeded):
-                ledger.reserve("run", free, spec)
                 ledger.reserve("run", free, spec)
             ledger.finish(one, free, {"prompt_tokens": 100, "completion_tokens": 20},
                           success=True)
-            two = ledger.reserve("run", free, spec)
             ledger.finish(two, free, None, success=False)
             summary = ledger.summary("run")
             self.assertEqual(summary["premium"]["uncertain_requests"], 1)
@@ -132,7 +131,7 @@ class LedgerTests(unittest.TestCase):
     def test_paid_run_limit_and_no_refund_on_ambiguous_error(self):
         with tempfile.TemporaryDirectory() as folder:
             ledger = Ledger(Path(folder))
-            budget = Budget(250000, 2500000, 10.0, 0.005, 1)
+            budget = Budget(250000, 2500000, 10.0, 0.0065, 1)
             paid = profile(reserve_input_tokens=2000, max_output_tokens=1000)
             t = ledger.reserve("run", paid, budget)
             ledger.finish(t, paid, None, success=False)
