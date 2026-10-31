@@ -32,8 +32,18 @@ def _file(root: Path, name: object) -> Path:
     return path
 
 
+PORTABLE_BAD = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                *(f"LPT{i}" for i in range(1, 10))}
+
+
+def portable_identifier(value: object) -> bool:
+    return (isinstance(value, str) and bool(IDENT.fullmatch(value))
+            and value.split(".")[0].upper() not in PORTABLE_BAD
+            and not value.endswith("."))
+
+
 def _identifier(value: object, description: str) -> str:
-    if not isinstance(value, str) or not IDENT.fullmatch(value):
+    if not portable_identifier(value):
         raise ValueError(f"{description}: expected portable identifier")
     return value
 

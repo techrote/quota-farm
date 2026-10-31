@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .client import ChatClient, text_byte_upper_bound
-from .config import IDENT, Profile, Spec
+from .config import Profile, Spec, portable_identifier
 from .ledger import Ledger
 
 SYSTEM = (
@@ -42,6 +42,32 @@ def atomic_json(path: Path, value: object) -> None:
     temp.replace(path)
 
 
+def verify_item(item: dict) -> None:
+    """Check snapshot consistency in addition to the enclosing run digest."""
+    if not portable_identifier(item.get("id")):
+        raise ValueError("invalid item id")
+    if sha(canonical(item.get("source"))) != item.get("source_sha256"):
+        raise ValueError("source snapshot digest mismatch")
+    generation = item.get("generation")
+    expected_candidate = (generation.get("response") if isinstance(generation, dict)
+                          else item.get("source", {}).get("candidate"))
+    if "candidate" in item and item["candidate"] != expected_candidate:
+        raise ValueError("candidate differs from original generation/source")
+    for raw in [generation, *item.get("reviews", {}).values()]:
+        if not isinstance(raw, dict) or "response" not in raw:
+            continue
+        if sha(raw["response"].encode("utf-8")) != raw.get("response_sha256"):
+            raise ValueError("response digest mismatch")
+        if sha(raw["prompt"].encode("utf-8")) != raw.get("prompt_sha256"):
+            raise ValueError("prompt digest mismatch")
+    if item.get("accepted") is True:
+        reviews = item.get("reviews", {})
+        if item.get("status") != "accepted" or not reviews or not all(
+            r.get("passes_threshold") is True for r in reviews.values()
+        ):
+            raise ValueError("accepted state inconsistent with review outcomes")
+
+
 def read_dataset(spec: Spec) -> list[dict]:
     if spec.dataset.stat().st_size > 40 * 1024 * 1024:
         raise ValueError("dataset larger than 40 MiB; split into jobs")
@@ -57,7 +83,7 @@ def read_dataset(spec: Spec) -> list[dict]:
         if not isinstance(item, dict):
             raise ValueError(f"dataset line {number}: expected JSON object")
         identifier = item.get("id")
-        if not isinstance(identifier, str) or not IDENT.fullmatch(identifier) or identifier in seen:
+        if not portable_identifier(identifier) or identifier in seen:
             raise ValueError(f"dataset line {number}: duplicate/invalid ID")
         seen.add(identifier)
         required = "input" if spec.mode == "generate_review" else "candidate"
@@ -260,6 +286,7 @@ class Runner:
         summary = {
             "run_id": self.run_id, "source_manifest_sha256": sha(canonical(manifest)),
             "total": len(results), "counts": counts,
+            "item_sha256": {r["id"]: sha(canonical(r)) for r in results},
             "disagreements": sum(bool(r.get("disagreement")) for r in results),
             "accounting": self.ledger.summary(self.run_id),
         }

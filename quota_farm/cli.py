@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .client import ChatClient
 from .config import load_spec
-from .engine import Runner, canonical, read_dataset, sha
+from .engine import Runner, canonical, read_dataset, sha, verify_item
 from .export import export_jsonl, materialize
 from .ledger import Ledger
 
@@ -32,19 +32,18 @@ def verify_run(run_dir: Path) -> dict:
         errors.append("manifest digest differs from run summary")
     counts: Counter = Counter()
     items = list((run_dir / "items").glob("*.json"))
+    expected_items = summary.get("item_sha256", {})
+    if set(expected_items) != {path.stem for path in items}:
+        errors.append("item index/expected digests mismatch")
     for path in items:
         try:
             item = json.loads(path.read_text(encoding="utf-8"))
             counts[item["status"]] += 1
-            if path.stem != item["id"] or sha(canonical(item["source"])) != item["source_sha256"]:
-                errors.append(f"{path.name}: source identity/hash mismatch")
-            for raw in [item.get("generation"), *item.get("reviews", {}).values()]:
-                if not isinstance(raw, dict) or "response" not in raw:
-                    continue
-                if sha(raw["response"].encode("utf-8")) != raw.get("response_sha256"):
-                    errors.append(f"{path.name}: response hash mismatch")
-                if sha(raw["prompt"].encode("utf-8")) != raw.get("prompt_sha256"):
-                    errors.append(f"{path.name}: prompt hash mismatch")
+            if path.stem != item["id"]:
+                errors.append(f"{path.name}: identifier mismatch")
+            if sha(canonical(item)) != expected_items.get(path.stem):
+                errors.append(f"{path.name}: original item digest mismatch")
+            verify_item(item)
         except (ValueError, KeyError, TypeError) as error:
             errors.append(f"{path.name}: {error}")
     if len(items) != summary.get("total") or dict(counts) != summary.get("counts"):

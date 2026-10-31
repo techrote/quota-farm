@@ -73,8 +73,9 @@ class ChatClient:
             )
         content = [{"type": "text", "text": user}]
         hashes = []
-        for path in images:
+        for number, path in enumerate(images, 1):
             item, info = image_payload(path, profile)
+            content.append({"type": "text", "text": f"Frame {number}/{len(images)}: {path.name}"})
             content.append(item)
             hashes.append(info)
         messages = [{"role": "system", "content": system},

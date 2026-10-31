@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 
+from .engine import canonical, sha, verify_item
+
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
 MAX_FILES = 1000
@@ -18,8 +20,21 @@ def accepted(run_dir: Path) -> list[dict]:
     manifest = run_dir / "manifest.json"
     if not manifest.is_file() or not (run_dir / "summary.json").is_file():
         raise ValueError("not a completed quota-farm run")
-    items = [json.loads(path.read_text(encoding="utf-8"))
-             for path in sorted((run_dir / "items").glob("*.json"))]
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    manifest = json.loads(manifest.read_text(encoding="utf-8"))
+    if sha(canonical(manifest)) != summary.get("source_manifest_sha256"):
+        raise ValueError("manifest evidence digest mismatch")
+    paths = sorted((run_dir / "items").glob("*.json"))
+    expected = summary.get("item_sha256", {})
+    if len(paths) != summary.get("total") or set(expected) != {p.stem for p in paths}:
+        raise ValueError("item index mismatch; refusing export")
+    items = []
+    for path in paths:
+        item = json.loads(path.read_text(encoding="utf-8"))
+        verify_item(item)
+        if sha(canonical(item)) != expected.get(path.stem):
+            raise ValueError(f"original receipt has changed: {path.name}")
+        items.append(item)
     return [item for item in items if item.get("status") == "accepted"
             and item.get("accepted") is True]
 
@@ -42,6 +57,8 @@ def safe_relative_path(raw: object) -> PurePosixPath:
     if not isinstance(raw, str) or not raw or "\\" in raw or raw.startswith("/"):
         raise ValueError("artifact path must be safe relative POSIX path")
     path = PurePosixPath(raw)
+    if path == PurePosixPath("."):
+        raise ValueError("artifact path must name a file")
     if any(part in ("", ".", "..") or ":" in part or part.endswith(" ")
            or part.endswith(".") or part.split(".")[0].upper() in WINDOWS_BAD
            for part in path.parts):

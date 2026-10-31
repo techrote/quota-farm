@@ -88,6 +88,8 @@ class ConfigurationTests(unittest.TestCase):
         for name in ("../bad", "/etc/passwd", "C:/windows/system.ini", "a/../../b", "a\\b"):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 safe_relative_path(name)
+        with self.assertRaises(ValueError):
+            safe_relative_path(".")
         self.assertEqual(str(safe_relative_path("levels/first.txt")), "levels/first.txt")
 
     def test_review_fail_closed(self):
@@ -177,7 +179,8 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(ProviderError):
                         await client.complete(profile(image_token_reserve=1200), "sys", "inspect", [path])
             content = captured[0]["messages"][1]["content"]
-            self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+            self.assertIn("Frame 1/1", content[1]["text"])
+            self.assertTrue(content[2]["image_url"]["url"].startswith("data:image/png;base64,"))
             self.assertFalse("tools" in captured[0])
 
     async def test_missing_key_fails_without_http(self):
@@ -226,7 +229,11 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             modified = json.loads(item.read_text())
             modified["candidate"] = "tampered"
             item.write_text(json.dumps(modified))
-            # Candidate editing isn't cryptographically signed; source/response edits are detected.
+            self.assertFalse(verify_run(run_dir)["evidence_verified"])
+            with self.assertRaises(ValueError):
+                export_jsonl(run_dir, root / "should-not-export.jsonl")
+            with self.assertRaises(ValueError):
+                materialize(run_dir, root / "should-not-materialize")
             modified["source"]["input"] = "tampered"
             item.write_text(json.dumps(modified))
             self.assertFalse(verify_run(run_dir)["evidence_verified"])
